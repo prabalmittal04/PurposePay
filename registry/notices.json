@@ -1,0 +1,71 @@
+[
+  {
+    "id": "harbourview-fees",
+    "title": "Harbourview semester fee",
+    "usedOnSend": true,
+    "rawText": "Harbourview Institute fee notice. Issuer: Harbourview Institute. Student beneficiary is a demo persona. Line 1: Semester tuition fee. Category: EDUCATION_FEE. Merchant category: EDUCATION.",
+    "fixture": {
+      "merchantCategory": "EDUCATION",
+      "issuerName": "Harbourview Institute",
+      "lineItems": [{ "description": "Semester tuition fee", "category": "EDUCATION_FEE" }]
+    }
+  },
+  {
+    "id": "electronics-bundle",
+    "title": "Electronics bundle labeled tuition",
+    "usedOnSend": false,
+    "rawText": "Thank you for your tuition purchase. Issuer: Demo Electronics Bazaar. Line 1: Laptop bundle for tuition season. Category: ELECTRONICS. Merchant category: ELECTRONICS_RETAIL.",
+    "fixture": {
+      "merchantCategory": "ELECTRONICS_RETAIL",
+      "issuerName": "Demo Electronics Bazaar",
+      "lineItems": [{ "description": "Laptop bundle", "category": "ELECTRONICS" }]
+    }
+  },
+  {
+    "id": "mixed-fee-gadget",
+    "title": "Semester fee plus gadget",
+    "usedOnSend": false,
+    "rawText": "Issuer: Harbourview Institute. Line 1: Semester fee. Category: EDUCATION_FEE. Line 2: Wireless earbuds. Category: ELECTRONICS.",
+    "fixture": {
+      "merchantCategory": "EDUCATION",
+      "issuerName": "Harbourview Institute",
+      "lineItems": [
+        { "description": "Semester fee", "category": "EDUCATION_FEE" },
+        { "description": "Wireless earbuds", "category": "ELECTRONICS" }
+      ]
+    }
+  },
+  {
+    "id": "bookstore-textbooks",
+    "title": "Bookstore textbooks",
+    "usedOnSend": false,
+    "rawText": "Issuer: Demo Bookstore. Tuition textbooks for the term. Category: BOOKS. Merchant category: RETAIL.",
+    "fixture": {
+      "merchantCategory": "RETAIL",
+      "issuerName": "Demo Bookstore",
+      "lineItems": [{ "description": "Textbooks", "category": "BOOKS" }]
+    }
+  },
+  {
+    "id": "empty-notice",
+    "title": "Empty notice",
+    "usedOnSend": false,
+    "rawText": "Notice",
+    "fixture": {
+      "merchantCategory": "",
+      "issuerName": "",
+      "lineItems": []
+    }
+  },
+  {
+    "id": "northgate-term-fee",
+    "title": "Northgate term fee",
+    "usedOnSend": false,
+    "rawText": "Northgate Academy fee notice. Issuer: Northgate Academy. Line 1: Term fee. Category: EDUCATION_FEE. Merchant category: EDUCATION.",
+    "fixture": {
+      "merchantCategory": "EDUCATION",
+      "issuerName": "Northgate Academy",
+      "lineItems": [{ "description": "Term fee", "category": "EDUCATION_FEE" }]
+    }
+  }
+]

@@ -1,0 +1,8 @@
+{
+  "name": "@purposepay/agents",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/decide.test.mjs"
+  }
+}

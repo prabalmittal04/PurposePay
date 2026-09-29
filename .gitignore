@@ -1,0 +1,13 @@
+node_modules
+.next
+contracts/cache
+contracts/artifacts
+contracts/typechain-types
+deployments
+rail/data/payouts.json
+rail/data/*.tmp
+.env
+.env.*
+AUDIT_HMAC_KEY
+*.csv
+*.log

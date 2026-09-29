@@ -1,0 +1,15 @@
+{
+  "name": "@purposepay/relayer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "test": "node --test test/resume.test.mjs"
+  },
+  "dependencies": {
+    "ethers": "^6.15.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.5"
+  }
+}

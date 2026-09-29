@@ -1,0 +1,21 @@
+{
+  "name": "purposepay",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "contracts",
+    "rail",
+    "relayer",
+    "agents",
+    "web"
+  ],
+  "scripts": {
+    "demo": "node scripts/demo.mjs",
+    "test": "npm test -w contracts && npm test -w rail && npm test -w agents && npm test -w relayer"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.5"
+  }
+}

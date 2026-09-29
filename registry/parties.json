@@ -1,0 +1,28 @@
+{
+  "senderVpa": "arun@purposepay.demo",
+  "beneficiaryVpa": "priya@purposepay.demo",
+  "beneficiaryName": "Priya (demo beneficiary)",
+  "senderName": "Arun (demo sender)",
+  "harbourview": {
+    "name": "Harbourview Institute",
+    "vpa": "fees@harbourview.demo",
+    "category": "SCHOOL"
+  },
+  "northgate": {
+    "name": "Northgate Academy",
+    "vpa": "fees@northgate.demo",
+    "category": "SCHOOL"
+  },
+  "citycare": {
+    "name": "Citycare Clinic",
+    "vpa": "billing@citycare.demo",
+    "category": "HOSPITAL"
+  },
+  "friendVpa": "friend@purposepay.demo",
+  "purposeTag": "TUITION",
+  "purposeCode": "P1301",
+  "purposeCodeLabel": "demo mapping",
+  "grossUsd6": "200000000",
+  "feeBps": 50,
+  "ratePaisePerUsd": 8350
+}
