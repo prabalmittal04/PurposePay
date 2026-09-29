@@ -12,6 +12,7 @@
     "web"
   ],
   "scripts": {
+    "build": "npm run build -w web",
     "demo": "node scripts/demo.mjs",
     "test": "npm test -w contracts && npm test -w rail && npm test -w agents && npm test -w relayer"
   },
