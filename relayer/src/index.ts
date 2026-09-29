@@ -240,14 +240,27 @@ async function auditRows(): Promise<AuditRow[]> {
   return out;
 }
 
+const nextNonce = new Map<string, number>();
+
 async function transact(wallet: Wallet, send: (nonce: number) => Promise<TransactionResponse>) {
-  const nonce = await wallet.provider!.getTransactionCount(wallet.address, "latest");
-  const tx = await send(nonce);
-  const receipt = await tx.wait();
-  if (!receipt || receipt.status !== 1) {
-    throw new Error("transaction was mined and reverted");
+  const key = wallet.address.toLowerCase();
+  let nonce = nextNonce.get(key);
+  if (nonce === undefined) {
+    nonce = await wallet.provider!.getTransactionCount(wallet.address, "pending");
   }
-  return { tx, receipt };
+  try {
+    const tx = await send(nonce);
+    nextNonce.set(key, nonce + 1);
+    const receipt = await tx.wait();
+    if (!receipt || receipt.status !== 1) {
+      nextNonce.delete(key);
+      throw new Error("transaction was mined and reverted");
+    }
+    return { tx, receipt };
+  } catch (error) {
+    nextNonce.delete(key);
+    throw error;
+  }
 }
 
 let queue: Promise<unknown> = Promise.resolve();
@@ -369,7 +382,7 @@ async function settleNew() {
     payoutId: after.payoutId,
     simulatedReference: record?.simulatedReference ?? null,
     referenceType: record?.referenceType ?? null,
-    txs: { create: created.txHash, reserve: reserveReceipt?.hash ?? reserveTx.hash, confirm: await settledTx(reader, created.id) },
+    txs: { create: created.txHash, reserve: reserveReceipt.hash, confirm: await settledTx(reader, created.id) },
     guardian,
     payeeName: parties.harbourview.name,
     payeeVpa: parties.harbourview.vpa,

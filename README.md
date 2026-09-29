@@ -48,7 +48,7 @@ Open http://127.0.0.1:3000/send
 
 ## Tests
 
-Re-run on 29 Sep 2026 after the treasury release, on Node 24. All passed.
+Re-run on 29 Sep 2026 after the treasury release, and again after the relayer stopped reusing a stale nonce, on Node 24. Both runs passed.
 
 | Suite | Result |
 | --- | --- |
