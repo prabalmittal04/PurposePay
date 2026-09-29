@@ -109,14 +109,24 @@ export async function drunixSandbox(request: PayoutRequest): Promise<PayoutRecor
   }
 }
 
-export async function payout(request: PayoutRequest, file = defaultPayoutsPath()): Promise<PayoutRecord> {
+const inflight = new Map<string, Promise<PayoutRecord>>();
+
+async function settleOnce(request: PayoutRequest, file: string): Promise<PayoutRecord> {
   const existing = getRecord(request.payoutId, file);
   if (existing) return existing;
-  let fresh: PayoutRecord;
-  if (process.env.DRUNIX_SANDBOX_URL) {
-    fresh = await drunixSandbox(request);
-  } else {
-    fresh = await mockUpi(request);
-  }
+  const fresh = process.env.DRUNIX_SANDBOX_URL ? await drunixSandbox(request) : await mockUpi(request);
   return putRecord(request.payoutId, fresh, file);
+}
+
+export async function payout(request: PayoutRequest, file = defaultPayoutsPath()): Promise<PayoutRecord> {
+  const key = `${file}\n${request.payoutId}`;
+  const pending = inflight.get(key);
+  if (pending) return pending;
+  const run = settleOnce(request, file);
+  inflight.set(key, run);
+  try {
+    return await run;
+  } finally {
+    if (inflight.get(key) === run) inflight.delete(key);
+  }
 }

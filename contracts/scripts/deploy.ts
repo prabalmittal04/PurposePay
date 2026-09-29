@@ -20,13 +20,13 @@ function commit(vpa: string) {
 }
 
 async function main() {
-  const [owner, sender, relayer, treasury] = await ethers.getSigners();
+  const [owner, sender, relayer, treasury, feeAccount] = await ethers.getSigners();
   const Usd = await ethers.getContractFactory("MockUSD");
   const usd = await Usd.deploy();
   await usd.waitForDeployment();
 
   const Vault = await ethers.getContractFactory("PurposeVault");
-  const vault = await Vault.deploy(await usd.getAddress(), relayer.address, treasury.address);
+  const vault = await Vault.deploy(await usd.getAddress(), relayer.address, treasury.address, feeAccount.address);
   await vault.waitForDeployment();
 
   await (await usd.mint(sender.address, 1_000_000_000_000n)).wait();
@@ -58,6 +58,7 @@ async function main() {
     sender: sender.address,
     relayer: relayer.address,
     treasury: treasury.address,
+    feeAccount: feeAccount.address,
     senderKey: "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
     relayerKey: "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
     validUntil,

@@ -24,7 +24,7 @@ Open http://127.0.0.1:3000/send
 - The FX quote is owner-set. The sender cannot pass a rate.
 - `createRemittance` rejects an unregistered payee and a hospital-on-tuition payee in a reverting transaction, before tokens move.
 - `reservePayout` and `confirmPayout` take no payee and no amount.
-- `confirmPayout` transfers the stored gross USD to the treasury. The 0.50% fee stays a stored calculation used to compute the INR amount.
+- `confirmPayout` sends the converted principal (`$199`) to the treasury and the fee (`$1`) to the fee account. The INR credit uses the `$199` only.
 - The payment reference is simulated (`referenceType: SIMULATED`).
 - Family-funded tuition ships as product tag `TUITION` with demo purpose code `P1301`.
 
@@ -39,26 +39,27 @@ Open http://127.0.0.1:3000/send
 
 ## Known limitations
 
-- `SETTLED` means the relayer attested that the adapter returned `CONFIRMED` for this payout id. The chain does not see an independent rail proof.
-- Funds in `PAYOUT_PENDING` or `PAYOUT_UNKNOWN` depend on relayer liveness. A relayer that stays down leaves those dollars in the vault. Automatic refund on timeout is not built, because a late credit would double-pay.
+- `SETTLED` is a local relayer attestation that the adapter returned `CONFIRMED`. The contract does not independently verify the rail. A compromised relayer could attest to a payment that did not happen. This is a demonstration of the workflow, not a trustless cross-border settlement protocol. A bank-grade design would need an authenticated, independently verifiable confirmation and reconciliation with the rail.
+- Funds in `PAYOUT_PENDING` or `PAYOUT_UNKNOWN` depend on relayer liveness. A relayer that stays down leaves those dollars in the vault. There is no time-based refund, because a late credit would double-pay.
+- A definite reject becomes `PAYOUT_REJECTED`. The sender can refund the gross, because the adapter reported that no credit was created. That refund is also a relayer attestation. `PAYOUT_UNKNOWN` cannot be refunded.
 - `DrunixSandbox` is unconnected unless `DRUNIX_SANDBOX_URL` is set. The default rail is `MockUPI`.
-- The reference is simulated. It is stored in `rail/data/payouts.json`, not in the chain event.
+- The reference is simulated. It is stored in `rail/data/payouts.json`, not in the chain event. That file is a single-process demo store, not a durable concurrency-safe ledger.
+- The HMAC key defaults to a local demo value. If the key changes, the same VPA gets a new party ref. If the key is exposed, the pseudonym is weakened. Production would need protected key management, durable transactional storage, and controlled access to the relayer.
 - "Under 10 seconds" applies only to this local script, from lock through the adapter confirm on localhost. It is not a network SLA.
-- A definite rail reject is logged and left on chain. Refund after reject is roadmap. Refund of the gross USD works from `OPEN` after quote expiry.
 
 ## Tests
 
-Re-run on 29 Sep 2026 after the treasury release, and again after the relayer stopped reusing a stale nonce, on Node 24. Both runs passed.
+Re-run on 29 Sep 2026 after the fee split and the reject refund, on Node 24.
 
 | Suite | Result |
 | --- | --- |
-| PurposeVault (Hardhat) | 10 passing |
-| MockUPI idempotency | 1 passing |
+| PurposeVault (Hardhat) | 14 passing |
+| MockUPI idempotency, including one concurrent payout id and a retry | 3 passing |
 | Guardian floor | 3 passing |
 | Relayer kill-and-resume | 1 passing |
-| **Total** | **15 passing, 0 failing** |
+| **Total** | **21 passing, 0 failing** |
 
-The new vault test locks $200, settles, and checks that the vault balance drops by exactly $200 while the treasury gains $200. It then refunds a second remittance from `OPEN` after expiry and checks that the sender receives the gross.
+The settlement test checks that the vault drops by $200, the treasury gains $199, and the fee account gains $1. A second confirm does not move funds again. A failed confirm can be retried. A removed payee fails reserve. An expired quote cannot create a remittance. Refund and reserve cannot both succeed. A definite reject can be refunded. A `PAYOUT_UNKNOWN` row cannot.
 
 ## What is live
 
@@ -66,20 +67,22 @@ The new vault test locks $200, settles, and checks that the vault balance drops 
 | --- | --- |
 | Asset escrow | Local Hardhat chain. `MockUSD` and `PurposeVault`. |
 | FX quote | Owner-set on the contract. Seed rate ₹83.50, fee 50 bps. |
-| USD release | On `SETTLED`, gross MockUSD moves to the treasury address stored at deploy. |
+| USD release | On `SETTLED`, `$199` goes to the treasury and `$1` goes to the fee account. |
 | Payout rail | `MockUPI`, unless `DRUNIX_SANDBOX_URL` is set. |
 | Payment reference | `referenceType: SIMULATED`. Not an NPCI or bank RRN. |
 | Guardian | Deterministic rule on labeled notice fields. An API key turns on extraction only. |
 
 ## Fee
 
-The sender does not supply a rate. `createRemittance` reads `setQuote`. Fee is a stored calculation deducted from USD before the INR conversion. Rounding is floor division. Settlement still transfers the full gross to the treasury.
+The sender does not supply a rate. `createRemittance` reads `setQuote` and stores gross, fee, and net. Rounding is floor division. On `SETTLED` the fee is retained by the fee account and the net principal is what the treasury receives. The INR credit uses the net only.
 
-- Gross `$200.00` = `200_000_000`
-- Fee `0.50%` = `1_000_000` (`$1.00`), stored, not split out of the treasury transfer
-- Net converted `$199.00` = `199_000_000`
+- Gross locked `$200.00` = `200_000_000`
+- Fee retained by the fee account `0.50%` = `1_000_000` (`$1.00`)
+- Converted principal sent to the treasury `$199.00` = `199_000_000`
 - Rate `8350` paise per USD
 - Beneficiary credit `199_000_000 × 8350 / 1_000_000` = `1_661_650` paise = **₹16,616.50**
+
+Reconciliation: `$200` locked = `$1` fee + `$199` converted. The rupee amount is the INR equivalent of the `$199`, not of the `$200`.
 
 The SWIFT "about 6%, about 2 days" column is an illustration. It is not a quote.
 
@@ -92,7 +95,7 @@ The SWIFT "about 6%, about 2 days" column is an illustration. It is not a quote.
 
 `reservePayout` and `confirmPayout` take no payee and no amount. Northgate Academy is a registered school the sender did not approve. That failure is a **policy preview (view call)**, labeled as such. No payout function accepts a payee.
 
-States: `OPEN` → `PAYOUT_PENDING` → `SETTLED`, and `PAYOUT_PENDING` → `PAYOUT_UNKNOWN` when the rail times out. `SETTLED` is written only after the adapter returns `CONFIRMED` for that payout id. That confirm also transfers `grossUsd6` to `treasury`. The same payout id is stored in `rail/data/payouts.json` before the adapter returns, so a restart does not create a second credit.
+States: `OPEN` → `PAYOUT_PENDING` → `SETTLED`, and `PAYOUT_PENDING` → `PAYOUT_UNKNOWN` when the rail times out. `PAYOUT_PENDING` or `PAYOUT_UNKNOWN` → `PAYOUT_REJECTED` when the adapter returns `DEFINITE_REJECT`, and the sender can then refund the gross. `SETTLED` is written only after the adapter returns `CONFIRMED`. That confirm sends `netUsd6` to the treasury and `feeUsd6` to the fee account. The same payout id is stored in `rail/data/payouts.json` before the adapter returns, so a restart does not create a second credit.
 
 ## Purpose code
 
@@ -119,7 +122,7 @@ Quote and compliance are modules, not agents. There is no accuracy percentage.
 
 ## Audit file
 
-`/audit` exports CSV. Party columns are `HMAC-SHA256(AUDIT_HMAC_KEY, "vpa:" + vpa)`. The file has no raw VPA, name, or notice text. It is a demo extract, not a regulatory filing. The default key is local-only and is overridden by `AUDIT_HMAC_KEY` when that variable is set.
+`/audit` exports CSV. Party columns are `HMAC-SHA256(AUDIT_HMAC_KEY, "vpa:" + vpa)`. The file has no raw VPA, name, or notice text. It is a demo extract, not a regulatory filing. The default key is local-only and is overridden by `AUDIT_HMAC_KEY` when that variable is set. Changing the key changes the party refs. The CSV columns `grossUsd6`, `feeUsd6`, and `netUsd6` are the locked amount, the fee retained by the fee account, and the principal converted to INR.
 
 ## Parties
 

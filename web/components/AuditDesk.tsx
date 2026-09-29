@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Hint } from "./Hint";
 import { formatInr, formatUsd, relayerUrl } from "../lib/format";
 
 type Row = {
@@ -37,15 +38,24 @@ export function AuditDesk() {
 
   return (
     <div className="space-y-4">
+      <ol className="grid gap-2 text-sm sm:grid-cols-3 no-print">
+        <li className="rounded-2xl border border-line bg-card px-4 py-3">1. Read the rows. No raw names or VPAs.</li>
+        <li className="rounded-2xl border border-line bg-card px-4 py-3">2. $200 locked = $1 fee + $199 converted.</li>
+        <li className="rounded-2xl border border-line bg-card px-4 py-3">3. Download the CSV or print this page.</li>
+      </ol>
       <div className="flex flex-wrap items-center justify-between gap-3 no-print">
         <p className="max-w-2xl text-sm leading-6 text-ink/70">{note}</p>
         <div className="flex gap-2">
-          <a className="rounded-full bg-ink px-4 py-2 text-sm text-paper" href={`${relayerUrl}/api/audit.csv`}>
-            Download CSV
-          </a>
-          <button type="button" className="rounded-full border border-ink px-4 py-2 text-sm" onClick={() => window.print()}>
-            Print
-          </button>
+          <Hint tip="Downloads the audit CSV. Party columns are HMAC refs. The file is a demo extract, not a filing.">
+            <a className="rounded-full bg-ink px-4 py-2 text-sm text-paper" href={`${relayerUrl}/api/audit.csv`}>
+              Download CSV
+            </a>
+          </Hint>
+          <Hint tip="Opens the print view. The header, footer, and these buttons are hidden on the printed page.">
+            <button type="button" className="rounded-full border border-ink px-4 py-2 text-sm" onClick={() => window.print()}>
+              Print
+            </button>
+          </Hint>
         </div>
       </div>
       {error && <p className="text-sm text-clay">{error}</p>}

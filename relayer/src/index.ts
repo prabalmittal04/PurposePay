@@ -6,12 +6,12 @@ import { Contract, Interface, JsonRpcProvider, Wallet, keccak256, toUtf8Bytes, t
 import { partyRef, toCsv, type AuditRow } from "../../agents/compliance.ts";
 import { DISCLAIMER, reviewNotice, type Notice } from "../../agents/guardian.ts";
 import { quoteFromGross } from "../../agents/quote.ts";
-import { getRecord, payout } from "../../rail/src/index.ts";
+import { getRecord, payout, putRecord } from "../../rail/src/index.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..", "..");
 
-const STATUS = ["NONE", "OPEN", "PAYOUT_PENDING", "PAYOUT_UNKNOWN", "SETTLED", "REFUNDED"] as const;
+const STATUS = ["NONE", "OPEN", "PAYOUT_PENDING", "PAYOUT_UNKNOWN", "SETTLED", "REFUNDED", "PAYOUT_REJECTED"] as const;
 const PURPOSE = ["TUITION", "MEDICAL", "RENT", "GENERAL"] as const;
 const GROSS = 200_000_000n;
 
@@ -280,8 +280,12 @@ async function resumeOne(id: number) {
   if (row.status !== "PAYOUT_PENDING" && row.status !== "PAYOUT_UNKNOWN") return row;
   const stored = getRecord(row.payoutId);
   if (stored?.outcome === "DEFINITE_REJECT") {
-    console.log(`payout ${row.payoutId} DEFINITE_REJECT is logged; state left unchanged; refund is roadmap`);
-    return row;
+    if (row.status === "PAYOUT_PENDING" || row.status === "PAYOUT_UNKNOWN") {
+      const { relayer } = await connect();
+      await transact(relayer, (nonce) => asRelayer.markRejected(id, row.payoutId, { nonce }));
+    }
+    console.log(`payout ${row.payoutId} DEFINITE_REJECT is PAYOUT_REJECTED. The sender may refund the gross. The rail is not called again.`);
+    return readRow(reader, id);
   }
   if (stored?.outcome === "CONFIRMED") {
     if (row.status !== "SETTLED") {
@@ -321,7 +325,9 @@ async function payReserved(id: number) {
     const { relayer } = await connect();
     await transact(relayer, (nonce) => asRelayer.markUnknown(id, row.payoutId, { nonce }));
   } else {
-    console.log(`payout ${row.payoutId} DEFINITE_REJECT is logged; state left unchanged; refund is roadmap`);
+    const { relayer } = await connect();
+    await transact(relayer, (nonce) => asRelayer.markRejected(id, row.payoutId, { nonce }));
+    console.log(`payout ${row.payoutId} DEFINITE_REJECT is PAYOUT_REJECTED. No credit was stored. The sender may refund the gross.`);
   }
   return readRow(reader, id);
 }
@@ -446,11 +452,14 @@ async function demoPayload() {
       friendVpa: parties.friendVpa,
     },
     treasury: await reader.treasury(),
+    feeAccount: await reader.feeAccount(),
     remittances: rows,
     limitations: [
       "A relayer that stays down leaves funds in PAYOUT_PENDING or PAYOUT_UNKNOWN. Automatic refund on timeout is not built, because a late credit would double-pay.",
       "SETTLED means the relayer attested that the adapter returned CONFIRMED for this payout id.",
-      "A definite rail reject is logged and left on chain. Refund after reject is roadmap.",
+      "A definite rail reject becomes PAYOUT_REJECTED. The sender may refund the gross because the adapter reported that no credit was created. PAYOUT_UNKNOWN cannot be refunded on a timer.",
+      "SETTLED is a local relayer attestation. The contract does not independently verify the rail. This demo is not a trustless settlement protocol.",
+      "The HMAC key is a local demo key. The JSON payout file is a single-process store, not a production ledger.",
     ],
   };
 }
@@ -490,6 +499,15 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       writeJson(res, 200, await enqueue(() => settleNew()));
       return;
     }
+    if (req.method === "POST" && url.pathname === "/api/demo/reject") {
+      writeJson(res, 200, await enqueue(() => demonstrateReject()));
+      return;
+    }
+    if (req.method === "POST" && url.pathname.startsWith("/api/demo/refund/")) {
+      const id = Number(url.pathname.split("/").pop());
+      writeJson(res, 200, await enqueue(() => refundRemittance(id)));
+      return;
+    }
     if (req.method === "POST" && url.pathname === "/api/trick/unregistered") {
       writeJson(res, 200, await enqueue(() => createTuition(parties.friendVpa)));
       return;
@@ -507,7 +525,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
       writeJson(res, 200, {
         rows,
         purposeCodeLabel: parties.purposeCodeLabel,
-        note: "Demo extract, not a regulatory filing. Party columns are HMAC-SHA256 refs. referenceType SIMULATED is not an NPCI or bank RRN.",
+        note: "Demo extract, not a regulatory filing. Party columns are HMAC-SHA256 refs from a local demo key. Gross is the locked amount, the fee is retained by the fee account, and net is the principal converted to INR. referenceType SIMULATED is not an NPCI or bank RRN.",
       });
       return;
     }
@@ -524,6 +542,59 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     writeJson(res, 404, { error: "not found" });
   } catch (error) {
     writeJson(res, 500, { error: error instanceof Error ? error.message : "relayer error" });
+  }
+}
+
+async function demonstrateReject() {
+  const created = await createTuition(parties.harbourview.vpa);
+  if (!created.ok) return created;
+  const { asRelayer, relayer, reader } = await connect();
+  await transact(relayer, (nonce) => asRelayer.reservePayout(created.id, { nonce }));
+  const reserved = await readRow(reader, created.id);
+  putRecord(reserved.payoutId, { outcome: "DEFINITE_REJECT", referenceType: "SIMULATED", simulatedReference: null });
+  const result = await payout({
+    payoutId: reserved.payoutId,
+    vpa: parties.harbourview.vpa,
+    amountPaise: reserved.netInrPaise,
+  });
+  if (result.outcome !== "DEFINITE_REJECT") {
+    throw new Error("reject demo stored a credit");
+  }
+  const { receipt } = await transact(relayer, (nonce) => asRelayer.markRejected(created.id, reserved.payoutId, { nonce }));
+  const after = await readRow(reader, created.id);
+  return {
+    ok: false as const,
+    error: "PAYOUT_REJECTED",
+    kind: "transaction" as const,
+    label: "definite reject, no credit",
+    id: created.id,
+    status: after.status,
+    txHash: receipt.hash,
+    explanation:
+      "The adapter reported that no payout occurred. Status is PAYOUT_REJECTED, not pending and not settled. The sender can refund the locked gross. PAYOUT_UNKNOWN still cannot be refunded, because a late credit would double-pay.",
+  };
+}
+
+async function refundRemittance(id: number) {
+  const { asSender, sender, reader, iface } = await connect();
+  const before = await readRow(reader, id);
+  if (before.status !== "PAYOUT_REJECTED" && before.status !== "OPEN") {
+    return { ok: false as const, error: "NotRefundable", status: before.status, id, kind: "transaction" as const };
+  }
+  try {
+    const { receipt } = await transact(sender, (nonce) => asSender.refund(id, { nonce }));
+    const after = await readRow(reader, id);
+    return {
+      ok: true as const,
+      id,
+      status: after.status,
+      txHash: receipt.hash,
+      kind: "transaction" as const,
+      label: "gross refund",
+      explanation: "The gross $200 returned to the sender. No simulated credit was created for this payout id.",
+    };
+  } catch (error) {
+    return { ok: false as const, error: errorName(iface, error), id, kind: "transaction" as const };
   }
 }
 

@@ -23,12 +23,13 @@ describe("PurposeVault", function () {
   let sender: Signer;
   let relayer: Signer;
   let treasury: Signer;
+  let feeAccount: Signer;
   let usd: MockUSD;
   let vault: PurposeVault;
   let validUntil: number;
 
   beforeEach(async function () {
-    [owner, sender, relayer, treasury] = await ethers.getSigners();
+    [owner, sender, relayer, treasury, feeAccount] = await ethers.getSigners();
     const Usd = await ethers.getContractFactory("MockUSD");
     usd = (await Usd.deploy()) as unknown as MockUSD;
     const Vault = await ethers.getContractFactory("PurposeVault");
@@ -36,6 +37,7 @@ describe("PurposeVault", function () {
       await usd.getAddress(),
       await relayer.getAddress(),
       await treasury.getAddress(),
+      await feeAccount.getAddress(),
     )) as unknown as PurposeVault;
     await usd.mint(await sender.getAddress(), 1_000_000_000_000n);
     await usd.connect(sender).approve(await vault.getAddress(), ethers.MaxUint256);
@@ -131,20 +133,24 @@ describe("PurposeVault", function () {
     expect((await vault.remittances(0)).status).to.equal(4n);
   });
 
-  it("pays the gross USD to the treasury on settlement and refunds the gross from OPEN", async function () {
+  it("pays net principal to the treasury and the fee to the fee account, and refunds the gross from OPEN", async function () {
     const vaultAddress = await vault.getAddress();
     const treasuryAddress = await treasury.getAddress();
+    const feeAddress = await feeAccount.getAddress();
     const senderAddress = await sender.getAddress();
 
     await vault.connect(sender).createRemittance(commit(PRIYA), commit(HARBOUR), TUITION, GROSS);
     const vaultAfterLock = await usd.balanceOf(vaultAddress);
     const treasuryBefore = await usd.balanceOf(treasuryAddress);
+    const feeBefore = await usd.balanceOf(feeAddress);
     await vault.connect(relayer).reservePayout(0);
     await vault.connect(relayer).confirmPayout(0, (await vault.remittances(0)).payoutId);
 
     expect(await usd.balanceOf(vaultAddress)).to.equal(vaultAfterLock - GROSS);
-    expect(await usd.balanceOf(treasuryAddress)).to.equal(treasuryBefore + GROSS);
+    expect(await usd.balanceOf(treasuryAddress)).to.equal(treasuryBefore + 199_000_000n);
+    expect(await usd.balanceOf(feeAddress)).to.equal(feeBefore + 1_000_000n);
     expect((await vault.remittances(0)).feeUsd6).to.equal(1_000_000n);
+    expect((await vault.remittances(0)).netUsd6).to.equal(199_000_000n);
     expect((await vault.remittances(0)).status).to.equal(4n);
 
     await vault.connect(sender).createRemittance(commit(PRIYA), commit(HARBOUR), TUITION, GROSS);
@@ -156,5 +162,74 @@ describe("PurposeVault", function () {
     expect(await usd.balanceOf(senderAddress)).to.equal(senderBeforeRefund + GROSS);
     expect(await usd.balanceOf(vaultAddress)).to.equal(vaultBeforeRefund - GROSS);
     expect((await vault.remittances(1)).status).to.equal(5n);
+  });
+
+  it("pays the treasury only once, including after a failed confirm", async function () {
+    const treasuryAddress = await treasury.getAddress();
+    const feeAddress = await feeAccount.getAddress();
+    await vault.connect(sender).createRemittance(commit(PRIYA), commit(HARBOUR), TUITION, GROSS);
+    await vault.connect(relayer).reservePayout(0);
+    const payoutId = (await vault.remittances(0)).payoutId;
+    await expect(vault.connect(relayer).confirmPayout(0, ethers.id("wrong"))).to.be.revertedWithCustomError(
+      vault,
+      "PayoutIdMismatch",
+    );
+    expect((await vault.remittances(0)).status).to.equal(2n);
+    expect(await usd.balanceOf(treasuryAddress)).to.equal(0n);
+
+    await vault.connect(relayer).confirmPayout(0, payoutId);
+    const treasuryAfter = await usd.balanceOf(treasuryAddress);
+    const feeAfter = await usd.balanceOf(feeAddress);
+    expect(treasuryAfter).to.equal(199_000_000n);
+    expect(feeAfter).to.equal(1_000_000n);
+
+    await expect(vault.connect(relayer).confirmPayout(0, payoutId)).to.be.revertedWithCustomError(vault, "InvalidStatus");
+    expect(await usd.balanceOf(treasuryAddress)).to.equal(treasuryAfter);
+    expect(await usd.balanceOf(feeAddress)).to.equal(feeAfter);
+  });
+
+  it("rejects a create after the quote expires", async function () {
+    await time.increaseTo(validUntil + 1);
+    await expect(
+      vault.connect(sender).createRemittance(commit(PRIYA), commit(HARBOUR), TUITION, GROSS),
+    ).to.be.revertedWithCustomError(vault, "QuoteExpired");
+    expect(await vault.remittanceCount()).to.equal(0);
+  });
+
+  it("does not allow refund and reserve to both succeed", async function () {
+    await vault.connect(sender).createRemittance(commit(PRIYA), commit(HARBOUR), TUITION, GROSS);
+    await vault.connect(sender).createRemittance(commit(PRIYA), commit(HARBOUR), TUITION, GROSS);
+    await vault.connect(relayer).reservePayout(0);
+    await time.increaseTo(validUntil + 1);
+
+    await expect(vault.connect(sender).refund(0)).to.be.revertedWithCustomError(vault, "InvalidStatus");
+    expect((await vault.remittances(0)).status).to.equal(2n);
+
+    await vault.connect(sender).refund(1);
+    expect((await vault.remittances(1)).status).to.equal(5n);
+    await expect(vault.connect(relayer).reservePayout(1)).to.be.revertedWithCustomError(vault, "InvalidStatus");
+  });
+
+  it("refunds the gross after a definite reject and still blocks a refund from PAYOUT_UNKNOWN", async function () {
+    const senderAddress = await sender.getAddress();
+    const vaultAddress = await vault.getAddress();
+    await vault.connect(sender).createRemittance(commit(PRIYA), commit(HARBOUR), TUITION, GROSS);
+    await vault.connect(sender).createRemittance(commit(PRIYA), commit(HARBOUR), TUITION, GROSS);
+    await vault.connect(relayer).reservePayout(0);
+    await vault.connect(relayer).reservePayout(1);
+    const rejectedId = (await vault.remittances(0)).payoutId;
+    const unknownId = (await vault.remittances(1)).payoutId;
+    await vault.connect(relayer).markRejected(0, rejectedId);
+    await vault.connect(relayer).markUnknown(1, unknownId);
+
+    expect((await vault.remittances(0)).status).to.equal(6n);
+    const before = await usd.balanceOf(senderAddress);
+    const vaultBefore = await usd.balanceOf(vaultAddress);
+    await vault.connect(sender).refund(0);
+    expect(await usd.balanceOf(senderAddress)).to.equal(before + GROSS);
+    expect(await usd.balanceOf(vaultAddress)).to.equal(vaultBefore - GROSS);
+    expect((await vault.remittances(0)).status).to.equal(5n);
+    await expect(vault.connect(sender).refund(1)).to.be.revertedWithCustomError(vault, "InvalidStatus");
+    await expect(vault.connect(relayer).confirmPayout(0, rejectedId)).to.be.revertedWithCustomError(vault, "InvalidStatus");
   });
 });

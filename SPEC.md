@@ -61,11 +61,14 @@ Checked in this order. The first failure is the reason.
 
 `OPEN → REFUNDED` only after expiry, by the sender, for the full gross USD.
 
+`PAYOUT_PENDING` or `PAYOUT_UNKNOWN` → `PAYOUT_REJECTED` → `REFUNDED` only after the adapter outcome is `DEFINITE_REJECT`.
+
 - `payoutId = keccak256(abi.encode(block.chainid, address(vault), id))`
-- Adapter `CONFIRMED` → `confirmPayout(id, payoutId)` → `SETTLED`. The event amount is the stored `netInrPaise`. The same call transfers `grossUsd6` of MockUSD to the stored `treasury` address. `feeUsd6` stays a stored calculation used to derive the INR amount. It is not split out of the transfer.
+- Adapter `CONFIRMED` → `confirmPayout(id, payoutId)` → `SETTLED`. The event carries `grossUsd6`, `feeUsd6`, `netUsd6`, and `netInrPaise`. The call transfers `netUsd6` to `treasury` (converted principal) and `feeUsd6` to `feeAccount` (fee retained by the operator). Their sum is the locked gross.
+- Adapter `DEFINITE_REJECT` → `markRejected` → `PAYOUT_REJECTED`. No dollars move and the rail is not called again. The sender may `refund` the gross from this status. This is a relayer attestation that no credit was created.
+- `PAYOUT_UNKNOWN` cannot be refunded. A time-based refund is not available, because a late confirm would double-pay.
 - Timeout or no response → `markUnknown` → `PAYOUT_UNKNOWN`. This is not proof of failure. No refund.
-- Adapter `DEFINITE_REJECT` → log it, leave the chain state unchanged, do not call the rail again for that `payoutId`. Refund after reject is roadmap.
-- `confirmPayout` is the relayer's attestation. The chain does not see an independent rail proof.
+- `confirmPayout` is the relayer's attestation. The chain does not independently verify the rail response. A compromised relayer could attest to a payment that did not happen. This repository is a local demonstration of the workflow, not a trustless cross-border settlement protocol. A bank-grade system would need an authenticated, independently verifiable payment confirmation and reconciliation with the rail.
 
 `SETTLED` means the relayer attested that the adapter returned `CONFIRMED` for this `payoutId`.
 
@@ -75,7 +78,9 @@ A relayer that stays down leaves funds in `PAYOUT_PENDING` or `PAYOUT_UNKNOWN`. 
 
 `rail/data/payouts.json` maps `payoutId` to `{ outcome, referenceType, simulatedReference }`. The adapter writes the file before it returns. A second call with the same id returns the stored row and does not create a second credit.
 
-On startup the relayer loads that file and resumes chain rows in `PAYOUT_PENDING` or `PAYOUT_UNKNOWN`. Stored `CONFIRMED` only sends `confirmPayout`. Stored `DEFINITE_REJECT` logs and stops.
+On startup the relayer loads that file and resumes chain rows in `PAYOUT_PENDING` or `PAYOUT_UNKNOWN`. Stored `CONFIRMED` only sends `confirmPayout`. Stored `DEFINITE_REJECT` sends `markRejected` and does not call the rail again.
+
+The JSON file is a single-process demonstration store. It is not a durable, concurrency-safe payment ledger. Production would need protected key management for `AUDIT_HMAC_KEY`, durable transactional storage, and controlled access to the relayer. The default HMAC key is local. Changing it changes every party ref. Exposing it weakens the pseudonym.
 
 `MockUPI` sets `referenceType` to `SIMULATED`. The UI says "Simulated reference". That string is not an NPCI or bank RRN. It is not written into the chain event.
 

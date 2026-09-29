@@ -33,7 +33,8 @@ contract PurposeVault is Ownable {
         PayoutPending,
         PayoutUnknown,
         Settled,
-        Refunded
+        Refunded,
+        PayoutRejected
     }
 
     struct Quote {
@@ -60,7 +61,10 @@ contract PurposeVault is Ownable {
 
     IERC20 public immutable usd;
     address public relayer;
+    /// @notice Receives netUsd6, the principal that was converted to INR.
     address public treasury;
+    /// @notice Receives feeUsd6. The fee is retained here, not modeled as a silent leftover inside the gross transfer.
+    address public feeAccount;
     Quote public quote;
     uint256 public remittanceCount;
     mapping(bytes32 => Category) public registry;
@@ -108,9 +112,12 @@ contract PurposeVault is Ownable {
         uint256 grossUsd6,
         uint256 feeUsd6,
         uint256 netUsd6,
-        uint256 netInrPaise
+        uint256 netInrPaise,
+        address treasury,
+        address feeAccount
     );
     event PayoutMarkedUnknown(uint256 indexed id, bytes32 payoutId);
+    event PayoutMarkedRejected(uint256 indexed id, bytes32 payoutId);
     event Refunded(uint256 indexed id, uint256 grossUsd6);
 
     modifier onlyRelayer() {
@@ -118,11 +125,12 @@ contract PurposeVault is Ownable {
         _;
     }
 
-    constructor(IERC20 usd_, address relayer_, address treasury_) Ownable(msg.sender) {
-        if (treasury_ == address(0)) revert BadTreasury();
+    constructor(IERC20 usd_, address relayer_, address treasury_, address feeAccount_) Ownable(msg.sender) {
+        if (treasury_ == address(0) || feeAccount_ == address(0)) revert BadTreasury();
         usd = usd_;
         relayer = relayer_;
         treasury = treasury_;
+        feeAccount = feeAccount_;
     }
 
     function setRelayer(address next) external onlyOwner {
@@ -228,14 +236,27 @@ contract PurposeVault is Ownable {
         emit RemittanceReserved(id, payoutId, row.quoteId, row.grossUsd6, row.feeUsd6, row.netUsd6, row.netInrPaise);
     }
 
+    /// @notice Splits the locked gross. Treasury receives the converted principal. The fee account retains the fee.
     function confirmPayout(uint256 id, bytes32 payoutId) external onlyRelayer {
         Remittance storage row = remittances[id];
         if (row.status != Status.PayoutPending && row.status != Status.PayoutUnknown) revert InvalidStatus();
         if (row.payoutId != payoutId || payoutId == bytes32(0)) revert PayoutIdMismatch();
-        uint256 gross = row.grossUsd6;
+        uint256 fee = row.feeUsd6;
+        uint256 net = row.netUsd6;
         row.status = Status.Settled;
-        usd.safeTransfer(treasury, gross);
-        emit RemittanceSettled(id, payoutId, row.quoteId, row.grossUsd6, row.feeUsd6, row.netUsd6, row.netInrPaise);
+        if (net != 0) usd.safeTransfer(treasury, net);
+        if (fee != 0) usd.safeTransfer(feeAccount, fee);
+        emit RemittanceSettled(
+            id,
+            payoutId,
+            row.quoteId,
+            row.grossUsd6,
+            fee,
+            net,
+            row.netInrPaise,
+            treasury,
+            feeAccount
+        );
     }
 
     function markUnknown(uint256 id, bytes32 payoutId) external onlyRelayer {
@@ -246,11 +267,25 @@ contract PurposeVault is Ownable {
         emit PayoutMarkedUnknown(id, payoutId);
     }
 
+    /// @notice A definite rail reject, attested by the relayer. No dollars move. Refund is then allowed.
+    function markRejected(uint256 id, bytes32 payoutId) external onlyRelayer {
+        Remittance storage row = remittances[id];
+        if (row.status != Status.PayoutPending && row.status != Status.PayoutUnknown) revert InvalidStatus();
+        if (row.payoutId != payoutId || payoutId == bytes32(0)) revert PayoutIdMismatch();
+        row.status = Status.PayoutRejected;
+        emit PayoutMarkedRejected(id, payoutId);
+    }
+
+    /// @notice OPEN refunds only after quote expiry. PAYOUT_REJECTED refunds the gross because the adapter reported no credit.
+    /// PAYOUT_UNKNOWN cannot be refunded: a late confirm would otherwise double-pay.
     function refund(uint256 id) external {
         Remittance storage row = remittances[id];
         if (msg.sender != row.sender) revert NotSender();
-        if (row.status != Status.Open) revert InvalidStatus();
-        if (block.timestamp <= row.expiry) revert QuoteExpired();
+        if (row.status == Status.Open) {
+            if (block.timestamp <= row.expiry) revert QuoteExpired();
+        } else if (row.status != Status.PayoutRejected) {
+            revert InvalidStatus();
+        }
         uint256 gross = row.grossUsd6;
         row.status = Status.Refunded;
         usd.safeTransfer(row.sender, gross);

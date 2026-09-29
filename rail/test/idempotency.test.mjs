@@ -26,3 +26,39 @@ test("a second payout with the same id returns the stored simulated reference", 
   assert.equal(Object.keys(stored).length, 1);
   assert.equal(calls, 2);
 });
+
+test("two concurrent payouts for the same id create one credit", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "pp-rail-"));
+  const file = path.join(dir, "payouts.json");
+  const request = {
+    payoutId: "0x00000000000000000000000000000000000000000000000000000000000000cd",
+    vpa: "fees@harbourview.demo",
+    amountPaise: "1661650",
+  };
+  const [first, second] = await Promise.all([payout(request, file), payout(request, file)]);
+  assert.equal(first.simulatedReference, second.simulatedReference);
+  assert.equal(first.outcome, "CONFIRMED");
+  const stored = JSON.parse(await readFile(file, "utf8"));
+  assert.equal(Object.keys(stored).length, 1);
+});
+
+test("a retry after a stored confirm does not create a second rail outcome", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "pp-rail-"));
+  const file = path.join(dir, "payouts.json");
+  const request = {
+    payoutId: "0x00000000000000000000000000000000000000000000000000000000000000ef",
+    vpa: "fees@harbourview.demo",
+    amountPaise: "1661650",
+  };
+  const first = await payout(request, file);
+  process.env.MOCK_UPI_MODE = "reject";
+  try {
+    const second = await payout(request, file);
+    assert.equal(second.outcome, "CONFIRMED");
+    assert.equal(second.simulatedReference, first.simulatedReference);
+    const stored = JSON.parse(await readFile(file, "utf8"));
+    assert.equal(Object.keys(stored).length, 1);
+  } finally {
+    delete process.env.MOCK_UPI_MODE;
+  }
+});

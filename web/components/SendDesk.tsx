@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Hint } from "./Hint";
 import { formatInr, formatRate, formatUsd, relayerUrl } from "../lib/format";
 
 type Formula = {
@@ -82,6 +83,11 @@ export function SendDesk() {
 
   return (
     <div className="space-y-6">
+      <ol className="grid gap-2 text-sm sm:grid-cols-3">
+        <li className="rounded-2xl border border-line bg-card px-4 py-3">1. Guardian checks the Harbourview fee lines.</li>
+        <li className="rounded-2xl border border-line bg-card px-4 py-3">2. Lock $200. The contract uses the owner rate.</li>
+        <li className="rounded-2xl border border-line bg-card px-4 py-3">3. Confirm. Treasury gets $199, the fee account keeps $1, Priya sees ₹16,616.50.</li>
+      </ol>
       <p className="max-w-2xl text-lg leading-8">
         {parties ? parties.senderName : "The sender"} locks $200 for {parties ? parties.beneficiaryName : "the beneficiary"}.
         The contract reads the owner-set rate. Payout can go only to {parties ? parties.schoolName : "the approved school"}.
@@ -119,14 +125,16 @@ export function SendDesk() {
           </section>
         </div>
       )}
-      <button
-        type="button"
-        onClick={send}
-        disabled={busy || !formula}
-        className="rounded-full bg-ink px-6 py-3 text-sm text-paper disabled:opacity-50"
-      >
-        {busy ? "Reserving, then confirming…" : "Lock $200 for Harbourview"}
-      </button>
+      <Hint tip="Locks $200, reserves the payout, then confirms. Treasury receives the $199 principal. The fee account retains $1.">
+        <button
+          type="button"
+          onClick={send}
+          disabled={busy || !formula}
+          className="rounded-full bg-ink px-6 py-3 text-sm text-paper disabled:opacity-50"
+        >
+          {busy ? "Reserving, then confirming…" : "Lock $200 for Harbourview"}
+        </button>
+      </Hint>
       {error && <p className="text-sm text-clay">{error}</p>}
       {result?.ok && result.guardian && (
         <section className="grid gap-4 rounded-3xl border border-line bg-card p-6 md:grid-cols-[1.2fr_0.8fr]">
@@ -136,7 +144,10 @@ export function SendDesk() {
               <li>OPEN — create {short(result.txs?.create)}</li>
               <li>PAYOUT_PENDING — reserve {short(result.txs?.reserve)}</li>
               <li>SETTLED — confirm {short(result.txs?.confirm)} only after the adapter returned CONFIRMED</li>
-              <li>Treasury receives the gross $200. The 0.50% fee stays a stored calculation. {short(treasury)}</li>
+              <li>
+                Treasury receives the converted principal {result.netUsd6 ? formatUsd(result.netUsd6) : "$199.00"}. The fee
+                account retains {result.feeUsd6 ? formatUsd(result.feeUsd6) : "$1.00"}. Together they equal the locked $200. {short(treasury)}
+              </li>
             </ol>
             <p className="mt-4 text-sm">
               Simulated reference <span className="font-mono">{result.simulatedReference}</span>
